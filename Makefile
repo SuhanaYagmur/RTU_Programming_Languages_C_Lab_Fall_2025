@@ -37,3 +37,22 @@ run-formats: formats
 
 clean:
 	rm -rf $(BUILD_DIR)/*.o $(PROGRAMS)
+
+# --- Lab 2 targets ---
+$(BUILD_DIR)/lab2_1: $(SRC_DIR)/lab2_1.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
+
+lab2_1: $(BUILD_DIR)/lab2_1
+
+$(BUILD_DIR)/lab2_2: $(SRC_DIR)/lab2_2.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
+
+lab2_2: $(BUILD_DIR)/lab2_2
+
+$(BUILD_DIR)/lab2_3: $(SRC_DIR)/lab2_3.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
+
+lab2_3: $(BUILD_DIR)/lab2_3
