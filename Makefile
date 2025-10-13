@@ -194,3 +194,23 @@ $(BUILD_DIR)/lab2_3: $(SRC_DIR)/lab2_3.c
 	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
 
 lab2_3: $(BUILD_DIR)/lab2_3
+
+# -----------------------
+# Lab 3
+# -----------------------
+lab3: $(BUILD_DIR)/lab3_task1 $(BUILD_DIR)/lab3_task2 $(BUILD_DIR)/lab3_task3
+
+$(BUILD_DIR)/lab3_task1: $(SRC_DIR)/lab3_task1.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
+lab3_task1: $(BUILD_DIR)/lab3_task1
+
+$(BUILD_DIR)/lab3_task2: $(SRC_DIR)/lab3_task2.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
+lab3_task2: $(BUILD_DIR)/lab3_task2
+
+$(BUILD_DIR)/lab3_task3: $(SRC_DIR)/lab3_task3.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
+lab3_task3: $(BUILD_DIR)/lab3_task3

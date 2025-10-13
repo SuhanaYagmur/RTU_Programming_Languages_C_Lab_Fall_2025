@@ -1,32 +1,39 @@
 /*
  * Lab 3, Task 3
- * Student Name, Student ID
+ * Student: Yagmur Tugran
+ * ID: 231ADB263
  *
- * Implement basic string handling functions.
- * Write your own versions of:
- *   - my_strlen (finds string length)
- *   - my_strcpy (copies string from src to dest)
- *
- * Rules:
- *   - Do not use <string.h> functions for strlen/strcpy.
- *   - Use loops and manual pointer/array access.
- *
- * Example:
- *   char s[] = "hello";
- *   int len = my_strlen(s);   // should return 5
- *
- *   char buffer[100];
- *   my_strcpy(buffer, s);     // buffer now contains "hello"
+ * Implement basic string handling functions WITHOUT <string.h>.
+ *  - my_strlen  : return length (not counting '\0')
+ *  - my_strcpy  : copy src into dest and add trailing '\0'
  */
 
 #include <stdio.h>
 
-// Function prototypes
+/* Function prototypes */
 int my_strlen(const char *str);
 void my_strcpy(char *dest, const char *src);
 
+/* Implementations */
+int my_strlen(const char *str) {
+    int len = 0;
+    while (str[len] != '\0') {
+        len++;
+    }
+    return len;
+}
+
+void my_strcpy(char *dest, const char *src) {
+    int i = 0;
+    while (src[i] != '\0') {
+        dest[i] = src[i];
+        i++;
+    }
+    dest[i] = '\0'; /* null terminator */
+}
+
+/* Simple tests */
 int main(void) {
-    // TODO: Test your functions here
     char test[] = "Programming in C";
     char copy[100];
 
@@ -37,14 +44,4 @@ int main(void) {
     printf("Copy: %s\n", copy);
 
     return 0;
-}
-
-// Implement functions below
-int my_strlen(const char *str) {
-    // TODO: count characters until '\0'
-    return 0; // placeholder
-}
-
-void my_strcpy(char *dest, const char *src) {
-    // TODO: copy characters until '\0'
 }
