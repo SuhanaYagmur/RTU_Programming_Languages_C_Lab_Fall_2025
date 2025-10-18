@@ -175,7 +175,6 @@ help:
 # -----------------------
 clean:
 	rm -rf $(BUILD_DIR)/*.o $(PROGRAMS)
-
 # --- Lab 2 targets ---
 $(BUILD_DIR)/lab2_1: $(SRC_DIR)/lab2_1.c
 	@mkdir -p $(BUILD_DIR)
