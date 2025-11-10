@@ -1,381 +1,349 @@
-// Yagmur TUgran 231ADB263
-//   cd src
-//   gcc -O2 -Wall -Wextra -std=c17 -o calc calc.c
-//
-//   echo "2 + 2"           > input1.txt
-//   echo "8 / 2 + 3*4"     > input2.txt
-//   echo "10 / 0"          > input3.txt
-//
-//./calc input1.txt
-// cat input1_Yagmur_TUgran_231ADB263.txt
-//
-//./calc input2.txt
-// cat input2_Yagmur_TUgran_231ADB263.txt
-//
-//./calc input3.txt
-// cat input3_Yagmur_TUgran_231ADB263.txt
-//
-//   rm -f input*.txt *_Yagmur_TUgran_231ADB263.txt calc
-//   This creates output file: input_Yagmur_TUgran_231ADB263.txt
-//   Notes: first error is reported as ERROR:<pos> (1-based). Operators: + - * /
-//   (From repo root instead) gcc -O2 -Wall -Wextra -std=c17 -o src/calc
-//   src/calc.c && src/calc src/input.txt
+// Yagmur Tugran 231adb263
+// gcc -std=c11 -O2 -Wall -Wextra -o calc calc.c -lm
+// ./calc test8.txt
 
-#include <ctype.h>
-#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
+#include <errno.h>
+#include <math.h>
+#include <dirent.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 
-/* These tags are used to form the output file name */
-#define STUDENT_NAME "Yagmur"
-#define STUDENT_LASTNAME "TUgran"
-#define STUDENT_ID "231ADB263"
+#ifdef _WIN32
+#define SEP "\\"
+#else
+#define SEP "/"
+#endif
 
-/* Keep only the first error position (0 => no error yet) */
-static size_t g_error_pos = 0;
-static void fail_at(size_t pos) {
-  if (!g_error_pos) g_error_pos = pos;
-}
+#define EPS 1e-12
 
-/* Simple byte stream */
-typedef struct {
-  const char* buf;
-  size_t len, idx;
-} Stream;
-static size_t pos1(const Stream* s) { return s->idx + 1; }
-
-/* Whitespace is irrelevant for the grammar */
-static void skip_ws(Stream* s) {
-  while (s->idx < s->len) {
-    char c = s->buf[s->idx];
-    if (c == ' ' || c == '\t' || c == '\r' || c == '\n')
-      s->idx++;
-    else
-      break;
-  }
-}
-
-/* Token kinds I actually need */
+// === TOKEN DEFINITIONS ===
 typedef enum {
-  T_NUM,
-  T_PLUS,
-  T_MINUS,
-  T_STAR,
-  T_SLASH,
-  T_EOF,
-  T_INVALID
-} TokKind;
+    T_NUMBER, T_PLUS, T_MINUS, T_STAR, T_SLASH,
+    T_POW, T_LPAREN, T_RPAREN, T_EOF
+} TokenType;
 
 typedef struct {
-  TokKind kind;
-  long long ival; /* valid when kind == T_NUM */
-  size_t start;   /* token’s starting index (1-based) */
+    TokenType type;
+    const char *start;
+    int pos1;
+    double num;
 } Token;
 
-static int isdig(char c) { return c >= '0' && c <= '9'; }
-
-/* When an operand is expected, a leading +/− belongs to the number */
-static int scan_signed_int(Stream* s, long long* out, size_t* start_out) {
-  size_t i = s->idx;
-  if (i >= s->len) return 0;
-  int sign = 1;
-  if (s->buf[i] == '+' || s->buf[i] == '-') {
-    sign = (s->buf[i] == '-') ? -1 : 1;
-    i++;
-  }
-  if (i >= s->len || !isdig(s->buf[i])) return 0;
-
-  long long v = 0;
-  while (i < s->len && isdig(s->buf[i])) {
-    /* integer overflow checks are out of scope here */
-    v = v * 10 + (s->buf[i] - '0');
-    i++;
-  }
-  *out = (sign == 1) ? v : -v;
-  *start_out = s->idx + 1;
-  s->idx = i;
-  return 1;
-}
-
-/* Minimal tokenizer: number/operator/EOF/INVALID */
-static Token next_token(Stream* s, int expecting_operand) {
-  skip_ws(s);
-  Token t = (Token){T_EOF, 0, pos1(s)};
-  if (s->idx >= s->len) return t;
-
-  char c = s->buf[s->idx];
-
-  if (expecting_operand) {
-    long long v;
-    size_t st;
-    if (scan_signed_int(s, &v, &st)) {
-      t.kind = T_NUM;
-      t.ival = v;
-      t.start = st;
-      return t;
-    }
-  } else {
-    if (isdig(c)) {
-      long long v;
-      size_t st;
-      if (scan_signed_int(s, &v, &st)) {
-        t.kind = T_NUM;
-        t.ival = v;
-        t.start = st;
-        return t;
-      }
-    }
-  }
-
-  if (c == '+') {
-    t.kind = T_PLUS;
-    t.start = pos1(s);
-    s->idx++;
-    return t;
-  }
-  if (c == '-') {
-    t.kind = T_MINUS;
-    t.start = pos1(s);
-    s->idx++;
-    return t;
-  }
-  if (c == '*') {
-    t.kind = T_STAR;
-    t.start = pos1(s);
-    s->idx++;
-    return t;
-  }
-  if (c == '/') {
-    t.kind = T_SLASH;
-    t.start = pos1(s);
-    s->idx++;
-    return t;
-  }
-
-  /* Anything else is outside this grammar */
-  t.kind = T_INVALID;
-  t.start = pos1(s);
-  s->idx++;
-  return t;
-}
-
-/* Grammar (no parentheses here):
-   expr := term { ('+'|'-') term }
-   term := factor { ('*'|'/') factor }
-   factor := NUMBER
-*/
+// === SCANNER ===
 typedef struct {
-  Stream* s;
-  Token look;
-  int expecting_operand;
-  int have_look;
-} Parser;
+    const char *src;
+    size_t len;
+    size_t i;
+    int pos1;
+    int at_line_start;
+} Scanner;
 
-static void load(Parser* p) {
-  p->look = next_token(p->s, p->expecting_operand);
-  p->have_look = 1;
+static int g_err = 0;
+static void set_error_pos(int p){ if(!g_err) g_err = p; }
+
+static void scan_init(Scanner *S, const char *src, size_t len){
+    S->src = src; S->len = len; S->i = 0; S->pos1 = 1; S->at_line_start = 1;
 }
-static void eat(Parser* p) {
-  p->have_look = 0;
-  /* After a number → expect operator; after an operator → expect operand */
-  switch (p->look.kind) {
-    case T_NUM:
-      p->expecting_operand = 0;
-      break;
-    case T_PLUS:
-    case T_MINUS:
-    case T_STAR:
-    case T_SLASH:
-      p->expecting_operand = 1;
-      break;
-    default:
-      break;
-  }
+static int peek(const Scanner *S){ return (S->i>=S->len)? EOF : (unsigned char)S->src[S->i]; }
+static int getc2(Scanner *S){
+    if (S->i>=S->len) return EOF;
+    int c = (unsigned char)S->src[S->i++];
+    S->pos1++;
+    S->at_line_start = (c=='\n');
+    return c;
 }
 
-static int parse_expr(Parser* p, long long* out);
-
-/* I return both the numeric value and where that number started.
-   The start index is useful for division-by-zero reporting. */
-static int parse_factor(Parser* p, long long* out, size_t* out_start) {
-  if (!p->have_look) load(p);
-  if (p->look.kind == T_NUM) {
-    *out = p->look.ival;
-    *out_start = p->look.start;
-    eat(p);
-    return 1;
-  }
-  /* I was expecting a number; record the first location it goes wrong */
-  fail_at(p->look.start);
-  return 0;
-}
-
-static int parse_term(Parser* p, long long* out) {
-  long long acc;
-  size_t lhs_pos;
-  if (!parse_factor(p, &acc, &lhs_pos)) return 0;
-
-  for (;;) {
-    if (!p->have_look) load(p);
-    if (p->look.kind == T_STAR || p->look.kind == T_SLASH) {
-      TokKind op = p->look.kind;
-      size_t op_pos = p->look.start; /* kept in case factor fails */
-      eat(p);
-
-      long long rhs;
-      size_t rhs_pos;
-      if (!parse_factor(p, &rhs, &rhs_pos)) {
-        if (!g_error_pos) fail_at(op_pos + 1);
-        return 0;
-      }
-
-      if (op == T_STAR) {
-        acc = acc * rhs;
-      } else { /* division */
-        if (rhs == 0) {
-          /* I report division-by-zero at the divisor’s first character */
-          fail_at(rhs_pos);
-          return 0;
+// Skip spaces and line comments starting with '#'
+static void skip_ws_and_comment(Scanner *S){
+    for(;;){
+        while(isspace(peek(S))) getc2(S);
+        if (S->at_line_start){
+            size_t j=S->i;
+            while(j<S->len && isspace((unsigned char)S->src[j]) && S->src[j]!='\n') j++;
+            if (j<S->len && S->src[j]=='#'){
+                while(1){ int c=getc2(S); if(c=='\n'||c==EOF) break; }
+                continue;
+            }
         }
-        acc = acc / rhs; /* C integer division semantics (trunc toward zero) */
-      }
-      continue;
+        break;
     }
-    break;
-  }
-  *out = acc;
-  return 1;
 }
 
-static int parse_expr(Parser* p, long long* out) {
-  long long acc;
-  if (!parse_term(p, &acc)) return 0;
-  for (;;) {
-    if (!p->have_look) load(p);
-    if (p->look.kind == T_PLUS || p->look.kind == T_MINUS) {
-      TokKind op = p->look.kind;
-      size_t op_pos = p->look.start;
-      eat(p);
-      long long rhs;
-      if (!parse_term(p, &rhs)) {
-        if (!g_error_pos) fail_at(op_pos + 1);
+// === TOKENIZER ===
+static Token next_tok(Scanner *S){
+    skip_ws_and_comment(S);
+    Token t; memset(&t,0,sizeof(t));
+    t.start = S->src + S->i;
+    t.pos1 = S->pos1;
+
+    int c = peek(S);
+    if (c==EOF){ t.type = T_EOF; return t; }
+
+    // number literal
+    if (isdigit(c) || c=='.'){
+        char *endp;
+        errno = 0;
+        double v = strtod(S->src + S->i, &endp);
+        if (endp == S->src + S->i){
+            getc2(S);
+            set_error_pos(t.pos1);
+            t.type = T_EOF;
+            return t;
+        }
+        size_t used = (size_t)(endp - (S->src + S->i));
+        for(size_t k=0;k<used;k++) getc2(S);
+        t.type = T_NUMBER; t.num = v;
+        return t;
+    }
+
+    // symbols and operators
+    if (c=='+'){ getc2(S); t.type=T_PLUS; return t; }
+    if (c=='-'){ getc2(S); t.type=T_MINUS; return t; }
+    if (c=='*'){
+        getc2(S);
+        if (peek(S)=='*'){ getc2(S); t.type=T_POW; return t; }
+        t.type=T_STAR; return t;
+    }
+    if (c=='/'){ getc2(S); t.type=T_SLASH; return t; }
+    if (c=='('){ getc2(S); t.type=T_LPAREN; return t; }
+    if (c==')'){ getc2(S); t.type=T_RPAREN; return t; }
+
+    // unknown character
+    getc2(S); set_error_pos(t.pos1); t.type=T_EOF; return t;
+}
+
+// === PARSER ===
+typedef struct { Token *a; size_t n, cap; } TV;
+static int tv_push(TV *v, Token t){
+    if (v->n==v->cap){
+        size_t newcap = v->cap? v->cap*2 : 64;
+        Token *na = (Token*)realloc(v->a, newcap*sizeof(Token));
+        if (!na) return 0;
+        v->a = na; v->cap = newcap;
+    }
+    v->a[v->n++] = t;
+    return 1;
+}
+
+typedef struct { TV toks; size_t i; } Parser;
+static Token* p_peek(Parser *P){ return (P->i<P->toks.n)? &P->toks.a[P->i] : NULL; }
+static Token* p_adv(Parser *P){ if(P->i<P->toks.n) P->i++; return &P->toks.a[P->i-1]; }
+static int p_match(Parser *P, TokenType tp){ Token *t=p_peek(P); if(t && t->type==tp){ p_adv(P); return 1;} return 0; }
+
+static double parse_expr(Parser *P);
+
+// primary: numbers or parenthesis
+static double parse_primary(Parser *P, int *outpos){
+    Token *t = p_peek(P);
+    if (!t){ set_error_pos(1); return 0; }
+    if (t->type==T_NUMBER){ *outpos = t->pos1; p_adv(P); return t->num; }
+    if (p_match(P,T_LPAREN)){
+        int lpos = P->toks.a[P->i-1].pos1;
+        double v = parse_expr(P);
+        if (!p_match(P,T_RPAREN)){
+            Token *u = p_peek(P);
+            if (u) set_error_pos(u->pos1); else set_error_pos(lpos);
+        }
+        *outpos = lpos; return v;
+    }
+    set_error_pos(t->pos1); return 0;
+}
+
+// handle unary +/- (like -3 or +4)
+static double parse_unary(Parser *P, int *outpos){
+    int sign = 1, pos = 0;
+    while (p_match(P,T_PLUS) || p_match(P,T_MINUS)){
+        Token *prev = &P->toks.a[P->i-1];
+        if (prev->type==T_MINUS) sign = -sign;
+        pos = prev->pos1;
+    }
+    double v = parse_primary(P, &pos);
+    *outpos = pos; return sign*v;
+}
+
+// exponentiation right-associative (**)
+static double parse_power(Parser *P, int *outpos){
+    double left = parse_unary(P, outpos);
+    if (p_match(P,T_POW)){
+        int rpos=0; double right = parse_power(P, &rpos);
+        *outpos = P->toks.a[P->i-1].pos1; return pow(left, right);
+    }
+    return left;
+}
+
+// * and /
+static double parse_term(Parser *P, int *outpos){
+    int apos=0; double val = parse_power(P,&apos);
+    for(;;){
+        if (p_match(P,T_STAR)){
+            int bpos=0; double b = parse_power(P,&bpos);
+            val *= b; *outpos = bpos;
+        } else if (p_match(P,T_SLASH)){
+            int bpos=0; double b = parse_power(P,&bpos);
+            if (fabs(b) < EPS){ set_error_pos(bpos); return 0; }
+            val /= b; *outpos = bpos;
+        } else break;
+    }
+    return val;
+}
+
+// + and -
+static double parse_expr(Parser *P){
+    int pos=0; double v = parse_term(P,&pos);
+    for(;;){
+        if (p_match(P,T_PLUS)){ int p2=0; v += parse_term(P,&p2); }
+        else if (p_match(P,T_MINUS)){ int p2=0; v -= parse_term(P,&p2); }
+        else break;
+    }
+    return v;
+}
+
+// tokenize whole input
+static void tokenize_all(Scanner *S, TV *out){
+    memset(out,0,sizeof(*out));
+    for(;;){
+        Token t = next_tok(S);
+        if (!tv_push(out, t)){ fprintf(stderr,"memory allocation failed while tokenizing\n"); g_err = g_err? g_err : 1; break; }
+        if (t.type==T_EOF) break;
+        if (g_err) break;
+    }
+}
+
+// === EVALUATION AND OUTPUT ===
+static int evaluate_and_write(const char *buf, size_t len, FILE *fo){
+    g_err = 0;
+    Scanner Sc; scan_init(&Sc, buf, len);
+    TV v; tokenize_all(&Sc, &v);
+
+    if (!g_err){
+        Parser P; P.toks = v; P.i=0;
+        (void)parse_expr(&P);
+        Token *t = p_peek(&P);
+        if (t && t->type!=T_EOF) set_error_pos(t->pos1);
+    }
+
+    if (g_err){
+        fprintf(fo, "ERROR:%d\n", g_err);
+        free(v.a);
+        return 1;
+    } else {
+        Parser P2; P2.toks = v; P2.i=0;
+        double val = parse_expr(&P2);
+        long long near = llround(val);
+        if (fabs(val - (double)near) < EPS) fprintf(fo, "%lld\n", near);
+        else fprintf(fo, "%.15g\n", val);
+        free(v.a);
         return 0;
-      }
-      acc = (op == T_PLUS) ? (acc + rhs) : (acc - rhs);
-      continue;
     }
-    break;
-  }
-  *out = acc;
-  return 1;
 }
 
-/* Read entire file into memory */
-static char* read_all(const char* path, size_t* out_len) {
-  FILE* f = fopen(path, "rb");
-  if (!f) return NULL;
-  if (fseek(f, 0, SEEK_END) != 0) {
-    fclose(f);
-    return NULL;
-  }
-  long sz = ftell(f);
-  if (sz < 0) {
-    fclose(f);
-    return NULL;
-  }
-  if (fseek(f, 0, SEEK_SET) != 0) {
-    fclose(f);
-    return NULL;
-  }
-  size_t n = (size_t)sz;
-  char* buf = (char*)malloc(n + 1);
-  if (!buf) {
-    fclose(f);
-    return NULL;
-  }
-  size_t rd = fread(buf, 1, n, f);
-  fclose(f);
-  if (rd != n) {
-    free(buf);
-    return NULL;
-  }
-  buf[n] = '\0';
-  if (out_len) *out_len = n;
-  return buf;
+// === FILE & DIRECTORY HELPERS ===
+static const char* getenv_or(const char *k, const char *d){
+    const char *v = getenv(k); return (v && *v)? v : d;
 }
 
-/* Output name: <input_stem>_Yagmur_TUgran_231ADB263.txt */
-static void build_out_name(const char* in, char* out, size_t cap) {
-  const char* slash = strrchr(in, '/');
-#ifdef _WIN32
-  const char* bslash = strrchr(in, '\\');
-  if (!slash || (bslash && bslash > slash)) slash = bslash;
+static int ensure_dir(const char *path){
+    struct stat st;
+    if (stat(path,&st)==0){
+#ifdef S_ISDIR
+        if (S_ISDIR(st.st_mode)) return 0;
+#else
+        if ((st.st_mode & S_IFMT) == S_IFDIR) return 0;
 #endif
-  const char* base = slash ? slash + 1 : in;
-
-  char stem[512];
-  size_t blen = strlen(base);
-  if (blen >= sizeof(stem)) blen = sizeof(stem) - 1;
-  memcpy(stem, base, blen);
-  stem[blen] = '\0';
-
-  size_t slen = strlen(stem);
-  if (slen >= 4 && strcmp(stem + slen - 4, ".txt") == 0) stem[slen - 4] = '\0';
-
-  snprintf(out, cap, "%s_%s_%s_%s.txt", stem, STUDENT_NAME, STUDENT_LASTNAME,
-           STUDENT_ID);
+        errno = ENOTDIR; return -1;
+    }
+#ifdef _WIN32
+    return mkdir(path);
+#else
+    return mkdir(path, 0775);
+#endif
 }
 
-int main(int argc, char** argv) {
-  if (argc != 2) {
-    fprintf(stderr, "Usage: %s input.txt\n", argv[0]);
-    return 1;
-  }
+// build default output dir name: <basename>_yagmur_<id>
+static void build_default_outdir(const char *input_path, char *out, size_t n){
+    const char *slash = strrchr(input_path, SEP[0]);
+    const char *base = slash? slash+1 : input_path;
+    char base_noext[256]; memset(base_noext,0,sizeof(base_noext));
+    strncpy(base_noext, base, sizeof(base_noext)-1);
+    char *dot = strrchr(base_noext, '.'); if (dot) *dot = '\0';
+    const char *user = getenv_or("USER","yagmur");
+    const char *sid  = getenv_or("STUDENT_ID","231adb263");
+    snprintf(out, n, "%s_%s_%s", base_noext, user, sid);
+}
 
-  size_t len = 0;
-  char* buf = read_all(argv[1], &len);
-  if (!buf) {
-    fprintf(stderr, "Failed to read '%s': %s\n", argv[1], strerror(errno));
-    return 1;
-  }
+// build file name for output
+static void build_output_filename(const char *input_path, char *out, size_t n){
+    const char *slash = strrchr(input_path, SEP[0]);
+    const char *base = slash? slash+1 : input_path;
+    const char *nm  = getenv_or("NAME","Yagmur");
+    const char *ln  = getenv_or("LASTNAME","Tugran");
+    const char *sid = getenv_or("STUDENT_ID","231adb263");
+    snprintf(out, n, "%s_%s_%s_%s.txt", base, nm, ln, sid);
+}
 
-  Stream s = {buf, len, 0};
-  Parser p = {&s, {0}, 1, 0};
-  long long result = 0;
-  int ok = parse_expr(&p, &result);
+// read full file into memory
+static char* read_all(const char *path, size_t *olen){
+    FILE *f = fopen(path,"rb"); if(!f) return NULL;
+    if (fseek(f,0,SEEK_END)!=0){ fclose(f); return NULL; }
+    long sz = ftell(f); if(sz<0){ fclose(f); return NULL; }
+    if (fseek(f,0,SEEK_SET)!=0){ fclose(f); return NULL; }
+    char *buf = (char*)malloc((size_t)sz+1); if(!buf){ fclose(f); return NULL; }
+    size_t n = fread(buf,1,(size_t)sz,f); fclose(f); buf[n]='\0'; if(olen) *olen=n; return buf;
+}
 
-  /* After parsing, only whitespace is allowed */
-  if (g_error_pos == 0) {
-    skip_ws(&s);
-    if (s.idx < s.len) {
-      size_t junk = pos1(&s);
-      (void)next_token(&s, 0); /* lock a stable position for trailing junk */
-      fail_at(junk);
-      ok = 0;
+static int ends_with(const char *s, const char *suf){
+    size_t a=strlen(s), b=strlen(suf); if(b>a) return 0; return strncmp(s+(a-b),suf,b)==0;
+}
+
+// process one .txt file
+static int process_one(const char *in_path, const char *out_dir){
+    size_t len=0; char *buf = read_all(in_path,&len);
+    if(!buf){ fprintf(stderr,"[read fail] %s\n", in_path); return 1; }
+    if (ensure_dir(out_dir)!=0){ fprintf(stderr,"[outdir fail] %s\n", out_dir); free(buf); return 1; }
+    char out_name[512]; build_output_filename(in_path,out_name,sizeof(out_name));
+    char out_path[1024]; snprintf(out_path,sizeof(out_path), "%s%s%s", out_dir, SEP, out_name);
+    FILE *fo = fopen(out_path,"wb"); if(!fo){ fprintf(stderr,"[write fail] %s\n", out_path); free(buf); return 1; }
+    (void)evaluate_and_write(buf,len,fo);
+    fclose(fo); free(buf); return 0;
+}
+
+// === MAIN ===
+static void usage(void){
+    fprintf(stderr,"Usage:\n");
+    fprintf(stderr,"  calc [-d DIR|--dir DIR] [-o OUTDIR|--output-dir OUTDIR] input.txt\n");
+}
+
+int main(int argc, char **argv){
+    const char *dir = NULL, *outd=NULL, *input=NULL;
+    for(int i=1;i<argc;i++){
+        if(!strcmp(argv[i],"-d")||!strcmp(argv[i],"--dir")){ if(i+1>=argc){usage(); return 1;} dir=argv[++i]; }
+        else if(!strcmp(argv[i],"-o")||!strcmp(argv[i],"--output-dir")){ if(i+1>=argc){usage(); return 1;} outd=argv[++i]; }
+        else if(argv[i][0]=='-'){ usage(); return 1; }
+        else input=argv[i];
     }
-  } else
-    ok = 0;
+    if(!input){ usage(); return 1; }
 
-  char out_path[1024];
-  build_out_name(argv[1], out_path, sizeof(out_path));
+    char def_out[512]={0};
+    if(!outd){ build_default_outdir(input,def_out,sizeof(def_out)); outd=def_out; }
 
-  FILE* out = fopen(out_path, "wb");
-  if (!out) {
-    fprintf(stderr, "Failed to open output '%s': %s\n", out_path,
-            strerror(errno));
-    free(buf);
-    return 1;
-  }
-
-  if (ok && g_error_pos == 0) {
-    fprintf(out, "%lld\n", result);
-  } else {
-    size_t pos = g_error_pos ? g_error_pos : (len + 1);
-    fprintf(out, "ERROR:%zu\n", pos);
-  }
-
-  fclose(out);
-  free(buf);
-  return 0;
+    int rc=0;
+    if (dir){
+        DIR *d = opendir(dir);
+        if(!d){ fprintf(stderr,"[dir open fail] %s\n", dir); return 1; }
+        struct dirent *e;
+        while((e=readdir(d))){
+            if(e->d_name[0]=='.') continue;
+            if(!ends_with(e->d_name,".txt")) continue;
+            char in_path[1024]; snprintf(in_path,sizeof(in_path), "%s%s%s", dir, SEP, e->d_name);
+            rc |= process_one(in_path, outd);
+        }
+        closedir(d);
+    } else {
+        rc = process_one(input, outd);
+    }
+    return rc?1:0;
 }
